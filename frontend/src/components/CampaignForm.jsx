@@ -54,6 +54,28 @@ const CampaignForm = ({ currentAccount }) => {
                 formData.durationDays
             );
 
+            // Save to backend
+            try {
+                await fetch('http://localhost:5000/api/campaigns', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        blockchain_id: Number(result.campaignId),
+                        creator_address: currentAccount,
+                        title: formData.title,
+                        description: formData.description,
+                        goal_amount: formData.goalAmount,
+                        duration_days: formData.durationDays,
+                        transaction_hash: result.transactionHash
+                    }),
+                });
+            } catch (backendError) {
+                console.error("Error saving to backend:", backendError);
+                toast.warning("Campaign created on blockchain but failed to save to database.");
+            }
+
             toast.success(
                 <div>
                     <p className="font-semibold">Campaign created successfully!</p>

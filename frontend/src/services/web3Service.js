@@ -1,3 +1,4 @@
+/* global BigInt */
 import { ethers } from "ethers";
 import contractABI from "./contractABI.json";
 import contractAddress from "./contractAddress.json";
@@ -175,8 +176,10 @@ export const createCampaign = async (title, description, goalAmount, durationDay
     try {
         const contract = await getContractInstance();
         const goalInWei = ethers.parseEther(goalAmount.toString());
+        // Ensure durationDays is an integer
+        const duration = BigInt(Math.floor(Number(durationDays)));
 
-        const tx = await contract.createCampaign(title, description, goalInWei, durationDays);
+        const tx = await contract.createCampaign(title, description, goalInWei, duration);
         const receipt = await tx.wait();
 
         return {
@@ -199,10 +202,29 @@ export const donate = async (campaignId, amountEth) => {
 
         const tx = await contract.donate(campaignId, { value: amountInWei });
         const receipt = await tx.wait();
+        const rewardLevel = receipt.logs[0].args[3]; // Extract reward level from event
+
+        // Save to backend
+        try {
+            await fetch('http://localhost:5000/api/donations', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    campaign_id: Number(campaignId),
+                    donor_address: await getCurrentAccount(),
+                    amount: amountEth.toString(),
+                    transaction_hash: receipt.hash
+                }),
+            });
+        } catch (backendError) {
+            console.error("Error saving donation to backend:", backendError);
+        }
 
         return {
             transactionHash: receipt.hash,
-            rewardLevel: receipt.logs[0].args[3], // Extract reward level from event
+            rewardLevel: rewardLevel,
         };
     } catch (error) {
         console.error("Error donating:", error);
@@ -301,6 +323,30 @@ export const getCampaign = async (campaignId) => {
  */
 export const getAllCampaigns = async () => {
     try {
+        // Try fetching from backend first
+        try {
+            const response = await fetch('http://localhost:5000/api/campaigns');
+            if (response.ok) {
+                const campaigns = await response.json();
+                return campaigns.map(c => ({
+                    id: c.blockchain_id,
+                    creator: c.creator_address,
+                    title: c.title,
+                    description: c.description,
+                    goalAmount: c.goal_amount,
+                    deadline: Math.floor(new Date(c.created_at).getTime() / 1000) + (c.duration_days * 86400), // Approximate deadline reconstruction
+                    collectedAmount: "0", // We might need to fetch this from blockchain still to get real-time updates
+                    isPaused: false,
+                    isFunded: false,
+                    expired: false,
+                    // Add a flag to indicate this is from DB
+                    fromDb: true
+                }));
+            }
+        } catch (err) {
+            console.warn("Backend unavailable, falling back to blockchain...", err);
+        }
+
         const contract = getReadOnlyContract();
         const campaignCounter = await contract.campaignCounter();
         const campaigns = [];
@@ -322,6 +368,24 @@ export const getAllCampaigns = async () => {
  */
 export const getCampaignDonations = async (campaignId) => {
     try {
+        // Try fetching from backend first
+        try {
+            const response = await fetch(`http://localhost:5000/api/campaigns/${campaignId}/donations`);
+            if (response.ok) {
+                const donations = await response.json();
+                return donations.map(d => ({
+                    donor: d.donor_address,
+                    amount: d.amount, // It's stored as plain decimal string/number in DB
+                    timestamp: Math.floor(new Date(d.created_at).getTime() / 1000), // Convert to unix timestamp for consistency
+                    rewardLevel: 0, // We might need to recalculate or store this in DB if critical. For now 0 or calc:
+                    // rewardLevel: calculateRewardLevel(d.amount).level,
+                    isFromDb: true
+                }));
+            }
+        } catch (err) {
+            console.warn("Backend unavailable for donations, falling back to blockchain...", err);
+        }
+
         const contract = getReadOnlyContract();
         const donations = await contract.getCampaignDonations(campaignId);
 
