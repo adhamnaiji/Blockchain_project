@@ -12,8 +12,38 @@ app.use(express.json());
 // Get all campaigns
 app.get('/api/campaigns', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM campaigns ORDER BY created_at DESC');
+        const query = `
+            SELECT c.*, COALESCE(SUM(d.amount), 0) as collected_amount 
+            FROM campaigns c 
+            LEFT JOIN donations d ON c.blockchain_id = d.campaign_id 
+            GROUP BY c.id 
+            ORDER BY c.created_at DESC
+        `;
+        const result = await pool.query(query);
         res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get single campaign by ID
+app.get('/api/campaigns/:id', async (req, res) => {
+    try {
+        const query = `
+            SELECT c.*, COALESCE(SUM(d.amount), 0) as collected_amount 
+            FROM campaigns c 
+            LEFT JOIN donations d ON c.blockchain_id = d.campaign_id 
+            WHERE c.blockchain_id = $1
+            GROUP BY c.id
+        `;
+        const result = await pool.query(query, [req.params.id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Campaign not found' });
+        }
+
+        res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Server error' });
@@ -62,7 +92,7 @@ app.get('/api/campaigns/:id/donations', async (req, res) => {
 
 // Record a new donation
 app.post('/api/donations', async (req, res) => {
-    const { campaign_id, donor_address, amount, transaction_hash } = req.body;
+    const { campaign_id, donor_address, amount, transaction_hash, reward_tier } = req.body;
 
     if (!campaign_id || !donor_address || !amount || !transaction_hash) {
         return res.status(400).json({ error: 'All fields are required' });
@@ -70,14 +100,30 @@ app.post('/api/donations', async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO donations (campaign_id, donor_address, amount, transaction_hash)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO donations (campaign_id, donor_address, amount, transaction_hash, reward_tier)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING *;
         `;
-        const values = [campaign_id, donor_address, amount, transaction_hash];
+        const values = [campaign_id, donor_address, amount, transaction_hash, reward_tier || 0];
 
         const result = await pool.query(query, values);
         res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Update campaign status (e.g. is_funded)
+app.put('/api/campaigns/:id/status', async (req, res) => {
+    const { is_funded } = req.body;
+    try {
+        const query = 'UPDATE campaigns SET is_funded = $1 WHERE blockchain_id = $2 RETURNING *';
+        const result = await pool.query(query, [is_funded, req.params.id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Campaign not found' });
+        }
+        res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Server error' });

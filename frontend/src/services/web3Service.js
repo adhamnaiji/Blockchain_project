@@ -182,9 +182,41 @@ export const createCampaign = async (title, description, goalAmount, durationDay
         const tx = await contract.createCampaign(title, description, goalInWei, duration);
         const receipt = await tx.wait();
 
+        // Find the CampaignCreated event
+        let event = receipt.logs.find(log => log.fragment && log.fragment.name === 'CampaignCreated');
+
+        if (!event) {
+            console.warn("Event not automatically parsed, attempting manual parsing...");
+            try {
+                // Manual parsing fallback
+                const iface = new ethers.Interface(CONTRACT_ABI);
+                for (const log of receipt.logs) {
+                    try {
+                        const parsed = iface.parseLog({
+                            topics: [...log.topics],
+                            data: log.data
+                        });
+                        if (parsed && parsed.name === 'CampaignCreated') {
+                            event = { args: parsed.args };
+                            break;
+                        }
+                    } catch (e) {
+                        // Not this event
+                    }
+                }
+            } catch (err) {
+                console.error("Error during manual parsing:", err);
+            }
+        }
+
+        if (!event) {
+            console.error("CampaignCreated event STILL not found. Receipt logs:", receipt.logs);
+            throw new Error("Campaign created but event not found. Check transaction logs in console.");
+        }
+
         return {
             transactionHash: receipt.hash,
-            campaignId: receipt.logs[0].args[0], // Extract campaignId from event
+            campaignId: event.args[0], // Extract campaignId from event
         };
     } catch (error) {
         console.error("Error creating campaign:", error);
@@ -202,7 +234,10 @@ export const donate = async (campaignId, amountEth) => {
 
         const tx = await contract.donate(campaignId, { value: amountInWei });
         const receipt = await tx.wait();
-        const rewardLevel = receipt.logs[0].args[3]; // Extract reward level from event
+
+        // Find the DonationReceived event
+        const event = receipt.logs.find(log => log.fragment && log.fragment.name === 'DonationReceived');
+        const rewardLevel = event ? event.args[3] : 0; // Extract reward level from event
 
         // Save to backend
         try {
@@ -215,7 +250,8 @@ export const donate = async (campaignId, amountEth) => {
                     campaign_id: Number(campaignId),
                     donor_address: await getCurrentAccount(),
                     amount: amountEth.toString(),
-                    transaction_hash: receipt.hash
+                    transaction_hash: receipt.hash,
+                    reward_tier: Number(rewardLevel) // Send reward level to DB
                 }),
             });
         } catch (backendError) {
@@ -270,6 +306,18 @@ export const withdrawFunds = async (campaignId) => {
         const contract = await getContractInstance();
         const tx = await contract.withdrawFunds(campaignId);
         const receipt = await tx.wait();
+
+        // Update backend
+        try {
+            await fetch(`http://localhost:5000/api/campaigns/${campaignId}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_funded: true })
+            });
+        } catch (err) {
+            console.error("Failed to update backend status:", err);
+        }
+
         return receipt.hash;
     } catch (error) {
         console.error("Error withdrawing funds:", error);
@@ -297,6 +345,32 @@ export const requestRefund = async (campaignId) => {
  */
 export const getCampaign = async (campaignId) => {
     try {
+        // Try fetching from backend first
+        try {
+            const response = await fetch(`http://localhost:5000/api/campaigns/${campaignId}`);
+            if (response.ok) {
+                const c = await response.json();
+                const deadline = Math.floor(new Date(c.created_at).getTime() / 1000) + (c.duration_days * 60);
+                const now = Math.floor(Date.now() / 1000);
+
+                return {
+                    id: c.blockchain_id,
+                    creator: c.creator_address,
+                    title: c.title,
+                    description: c.description,
+                    goalAmount: c.goal_amount,
+                    deadline: deadline,
+                    collectedAmount: c.collected_amount ? c.collected_amount.toString() : "0",
+                    isPaused: false,
+                    isFunded: c.is_funded || false, // Read from DB
+                    expired: now > deadline, // Calculate expiration client-side
+                    fromDb: true
+                };
+            }
+        } catch (err) {
+            console.warn(`Backend unavailable for campaign ${campaignId}, falling back to blockchain...`, err);
+        }
+
         const contract = getReadOnlyContract();
         const campaign = await contract.getCampaign(campaignId);
 
@@ -334,8 +408,8 @@ export const getAllCampaigns = async () => {
                     title: c.title,
                     description: c.description,
                     goalAmount: c.goal_amount,
-                    deadline: Math.floor(new Date(c.created_at).getTime() / 1000) + (c.duration_days * 86400), // Approximate deadline reconstruction
-                    collectedAmount: "0", // We might need to fetch this from blockchain still to get real-time updates
+                    deadline: Math.floor(new Date(c.created_at).getTime() / 1000) + (c.duration_days * 60), // Approximate deadline reconstruction (Minutes for testing)
+                    collectedAmount: c.collected_amount ? c.collected_amount.toString() : "0",
                     isPaused: false,
                     isFunded: false,
                     expired: false,
@@ -377,8 +451,7 @@ export const getCampaignDonations = async (campaignId) => {
                     donor: d.donor_address,
                     amount: d.amount, // It's stored as plain decimal string/number in DB
                     timestamp: Math.floor(new Date(d.created_at).getTime() / 1000), // Convert to unix timestamp for consistency
-                    rewardLevel: 0, // We might need to recalculate or store this in DB if critical. For now 0 or calc:
-                    // rewardLevel: calculateRewardLevel(d.amount).level,
+                    rewardLevel: d.reward_tier || 0, // Get from DB
                     isFromDb: true
                 }));
             }
@@ -542,9 +615,17 @@ export const getDaysRemaining = (deadline) => {
  * Get campaign status
  */
 export const getCampaignStatus = (campaign) => {
-    if (campaign.isFunded) return "Funded";
-    if (campaign.expired) return "Expired";
+    if (!campaign) return "Unknown";
     if (campaign.isPaused) return "Paused";
+    if (campaign.isFunded) return "Funded";
+
+    // Check expiration
+    const now = Math.floor(Date.now() / 1000);
+    if (campaign.expired || now >= campaign.deadline) return "Expired";
+
+    // Check if goal reached but not expired/funded
+    if (parseFloat(campaign.collectedAmount) >= parseFloat(campaign.goalAmount)) return "Goal Reached";
+
     return "Open";
 };
 

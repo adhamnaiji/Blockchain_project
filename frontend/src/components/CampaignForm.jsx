@@ -171,7 +171,7 @@ const CampaignForm = ({ currentAccount }) => {
                 {/* Duration */}
                 <div>
                     <label htmlFor="durationDays" className="block text-sm font-semibold text-gray-700 mb-2">
-                        Duration (Days) *
+                        Duration (Minutes) [TEST MODE] *
                     </label>
                     <input
                         type="number"

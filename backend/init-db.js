@@ -12,6 +12,7 @@ const createTableQuery = `
         goal_amount DECIMAL(18, 2) NOT NULL,
         duration_days INTEGER NOT NULL,
         transaction_hash VARCHAR(66) NOT NULL,
+        is_funded BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
