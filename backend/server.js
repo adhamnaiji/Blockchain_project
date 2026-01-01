@@ -130,6 +130,17 @@ app.put('/api/campaigns/:id/status', async (req, res) => {
     }
 });
 
+// DEV ONLY: Reset database
+app.delete('/api/admin/reset', async (req, res) => {
+    try {
+        await pool.query('TRUNCATE TABLE donations, campaigns RESTART IDENTITY CASCADE');
+        res.json({ message: 'Database reset successfully' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });

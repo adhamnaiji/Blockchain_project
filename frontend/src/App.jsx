@@ -123,17 +123,9 @@ function App() {
                                     <li><Link to="/history" className="hover:text-white transition-colors">Donation History</Link></li>
                                 </ul>
                             </div>
-                            <div>
-                                <h4 className="font-semibold mb-3">About</h4>
-                                <p className="text-sm text-gray-300">
-                                    Built for the Blockchain & Cryptography course at ISIMS (2025-2026).
-                                    Powered by Ethereum Sepolia Testnet.
-                                </p>
-                            </div>
+
                         </div>
-                        <div className="border-t border-gray-700 mt-8 pt-6 text-center text-sm text-gray-400">
-                            <p>© 2025 DonationChain. Built with ❤️ using React & Solidity.</p>
-                        </div>
+
                     </div>
                 </footer>
 

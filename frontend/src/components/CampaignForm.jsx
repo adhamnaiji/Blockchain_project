@@ -56,7 +56,7 @@ const CampaignForm = ({ currentAccount }) => {
 
             // Save to backend
             try {
-                await fetch('http://localhost:5000/api/campaigns', {
+                const response = await fetch('http://localhost:5000/api/campaigns', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -71,9 +71,15 @@ const CampaignForm = ({ currentAccount }) => {
                         transaction_hash: result.transactionHash
                     }),
                 });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Server responded with ${response.status}`);
+                }
             } catch (backendError) {
                 console.error("Error saving to backend:", backendError);
-                toast.warning("Campaign created on blockchain but failed to save to database.");
+                toast.warning(`Campaign created on blockchain but failed to save to database: ${backendError.message}`);
+                // We don't throw here because the blockchain tx succeeded
             }
 
             toast.success(

@@ -149,6 +149,16 @@ export const getBalance = async (address) => {
 export const getContractInstance = async () => {
     try {
         const signerInstance = await getSigner();
+        const provider = signerInstance.provider;
+
+        // Verify contract code exists
+        const code = await provider.getCode(CONTRACT_ADDRESS);
+        if (code === "0x") {
+            const errorMsg = `Contract not found at ${CONTRACT_ADDRESS}. Network: ${REQUIRED_NETWORK}. Did you restart the node? Please run 'npm run deploy:local' and restart the frontend.`;
+            console.error(errorMsg);
+            throw new Error(errorMsg);
+        }
+
         return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signerInstance);
     } catch (error) {
         console.error("Error getting contract instance:", error);
@@ -241,7 +251,7 @@ export const donate = async (campaignId, amountEth) => {
 
         // Save to backend
         try {
-            await fetch('http://localhost:5000/api/donations', {
+            const response = await fetch('http://localhost:5000/api/donations', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -254,6 +264,11 @@ export const donate = async (campaignId, amountEth) => {
                     reward_tier: Number(rewardLevel) // Send reward level to DB
                 }),
             });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error("Backend donation save failed:", errorData.error);
+            }
         } catch (backendError) {
             console.error("Error saving donation to backend:", backendError);
         }
@@ -309,11 +324,14 @@ export const withdrawFunds = async (campaignId) => {
 
         // Update backend
         try {
-            await fetch(`http://localhost:5000/api/campaigns/${campaignId}/status`, {
+            const response = await fetch(`http://localhost:5000/api/campaigns/${campaignId}/status`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ is_funded: true })
             });
+            if (!response.ok) {
+                console.error("Failed to update backend status:", await response.text());
+            }
         } catch (err) {
             console.error("Failed to update backend status:", err);
         }
